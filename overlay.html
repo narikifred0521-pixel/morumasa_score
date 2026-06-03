@@ -266,8 +266,11 @@ body {
 <body>
 <div class="overlay" id="overlay"></div>
 
-<script>
-// チーム1=オレンジ、チーム2=青、3以降はバランスよく
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { getDatabase, ref, onValue } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+
+// チーム1=オレンジ、チーム2=青、〃3以降はバランスよく
 const TEAM_COLORS = ['#FF5500','#2B9DC8','#9B59B6','#27AE60','#E67E22','#E74C3C'];
 const STORAGE_KEY = 'molkky_live_state';
 let lastStateStr = null;
@@ -560,7 +563,23 @@ function esc(s) {
     .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// BroadcastChannel（同一オリジン・即時同期）
+// ─── Firebase Realtime Database リアルタイム同期 ───
+const firebaseConfig = {
+  databaseURL: 'https://morumasa-score-4818b-default-rtdb.asia-southeast1.firebasedatabase.app'
+};
+const fbApp = initializeApp(firebaseConfig);
+const db = getDatabase(fbApp);
+const gameRef = ref(db, 'game');
+
+onValue(gameRef, (snapshot) => {
+  const data = snapshot.val();
+  if (data) {
+    const s = JSON.stringify(data);
+    if (s !== lastStateStr) { lastStateStr = s; render(data); }
+  }
+});
+
+// フォールバック: BroadcastChannel（同一デバイス内の即時同期）
 try {
   const bc = new BroadcastChannel('molkky_live');
   bc.onmessage = (e) => {
@@ -571,16 +590,9 @@ try {
   };
 } catch(_) {}
 
-// フォールバック: 500msポーリング
-setInterval(() => {
-  const state = getState();
-  const s = JSON.stringify(state);
-  if (s !== lastStateStr) { lastStateStr = s; render(state); }
-}, 500);
-
+// 初期表示: localStorageから読み込み（Firebase接続前の表示用）
 const init = getState();
-lastStateStr = JSON.stringify(init);
-render(init);
+if (init) { lastStateStr = JSON.stringify(init); render(init); } else { render(null); }
 </script>
 </body>
 </html>
