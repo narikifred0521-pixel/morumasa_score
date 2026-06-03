@@ -5,6 +5,20 @@
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>もるまさスコア</title>
 <link rel="icon" href="icon.png"/>
+<!-- Firebase SDK -->
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { getDatabase, ref, set } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+
+const firebaseConfig = {
+  databaseURL: 'https://morumasa-score-4818b-default-rtdb.asia-southeast1.firebasedatabase.app'
+};
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+// グローバルに公開（後続のscriptから呼べるように）
+window._fbSet = (path, data) => set(ref(db, path), data);
+</script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;}
 
@@ -522,6 +536,10 @@ function broadcastState() {
   const payload = JSON.stringify({ type: 'state', data: getPublicState() });
   if (bc) bc.postMessage(payload);
   try { localStorage.setItem('molkky_live_state', payload); } catch(e) {}
+  // Firebase Realtime Database に書き込む（クロスデバイス同期）
+  if (window._fbSet) {
+    try { window._fbSet('game', getPublicState()); } catch(e) {}
+  }
 }
 
 function getPublicState() {
