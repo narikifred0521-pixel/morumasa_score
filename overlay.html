@@ -266,10 +266,10 @@ body {
 <body>
 <div class="overlay" id="overlay"></div>
 
-<script type="module">
-import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getDatabase, ref, onValue } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
-
+<!-- Firebase SDK (compat版) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script>
 // チーム1=オレンジ、チーム2=青、〃3以降はバランスよく
 const TEAM_COLORS = ['#FF5500','#2B9DC8','#9B59B6','#27AE60','#E67E22','#E74C3C'];
 const STORAGE_KEY = 'molkky_live_state';
@@ -431,8 +431,8 @@ function buildRecentThrows(state) {
   });
 
   const turnNums = Object.keys(turnMap).map(Number).sort((a,b) => a-b);
-  // 直近5ターン分だけ表示
-  const visibleTurns = turnNums.slice(-10); // 直近10ターン分を横に展開
+  // 常に最新5ターン分だけ表示（古いものは左に流れて消える）
+  const visibleTurns = turnNums.slice(-5);
 
   // チームごとに1行、ターンを横に並べる転置レイアウト
   // 左端: チーム名 | ターン1 | ターン2 | ...
@@ -563,15 +563,12 @@ function esc(s) {
     .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// ─── Firebase Realtime Database リアルタイム同期 ───
+// ─── Firebase Realtime Database リアルタイム同期 (compat版) ───
 const firebaseConfig = {
   databaseURL: 'https://morumasa-score-4818b-default-rtdb.asia-southeast1.firebasedatabase.app'
 };
-const fbApp = initializeApp(firebaseConfig);
-const db = getDatabase(fbApp);
-const gameRef = ref(db, 'game');
-
-onValue(gameRef, (snapshot) => {
+firebase.initializeApp(firebaseConfig);
+firebase.database().ref('game').on('value', (snapshot) => {
   const data = snapshot.val();
   if (data) {
     const s = JSON.stringify(data);
