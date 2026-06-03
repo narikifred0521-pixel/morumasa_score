@@ -476,6 +476,10 @@ function startGame() {
   }
   const gname = document.getElementById('game-name');
   S.settings.gameName = gname ? gname.value.trim() : '';
+  // 大会名を別途保存（次回起動時に自動復元）
+  if (S.settings.gameName) {
+    try { localStorage.setItem('molkky_game_name', S.settings.gameName); } catch(e) {}
+  }
 
   S.teams = initTeams(names);
   S.currentTeamIdx = 0;
@@ -685,7 +689,7 @@ function buildSetup() {
       <div class="card-body">
         <div class="form-group">
           <label>試合名（任意）</label>
-          <input type="text" id="game-name" placeholder="例：予選Aブロック 第1試合" value="${escHtml(S.settings.gameName||'')}"/>
+          <input type="text" id="game-name" placeholder="例：予選Aブロック 第1試合" value="${escHtml(S.settings.gameName || (()=>{try{return localStorage.getItem('molkky_game_name')||'';}catch(e){return '';}})())}"/>
         </div>
         <div class="form-group">
           <label>チーム数</label>
