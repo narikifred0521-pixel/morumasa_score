@@ -295,11 +295,11 @@ function render(state) {
   const rm = state.regMode || 'match';
   const rn = state.regN || 3;
   const regLabel = rm === 'first' ? `${rn}セット先取` : rm === 'total' ? `${rn}セット合計` : `${rn}セット勝負`;
-  const titleHtml = state.gameName
-    ? `<div class="game-title-bar">
-        <span class="game-title-name">${esc(state.gameName)}</span>
-        <span class="game-title-reg">${regLabel}</span>
-      </div>` : '';
+  // 大会名がなくてもレギュ名は常に表示
+  const titleHtml = `<div class="game-title-bar">
+    ${state.gameName ? `<span class="game-title-name">${esc(state.gameName)}</span>` : ''}
+    <span class="game-title-reg">${regLabel}</span>
+  </div>`;
 
   if (state.phase === 'finished') {
     const winner = state.teams.find(t => t.id === state.winnerId);
