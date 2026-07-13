@@ -496,6 +496,32 @@ function startGame() {
   render();
 }
 
+// 試合開始後に、チーム名と設定を保持したまま開始前のsetup画面へ戻す。
+// チーム名を消すのは明示的な「試合リセット」(resetGame)のみ。
+function backToSetup() {
+  S.teams = S.teams.map(t => ({
+    ...t, score: 0, missStreak: 0, history: [], isEliminated: false, setWins: 0, setTotalScore: 0,
+  }));
+  S.phase = 'setup';
+  S.currentTeamIdx = 0;
+  S.turnCount = 0;
+  S.currentSet = 1;
+  S.setResults = [];
+  S.lastSetWinnerId = null;
+  S.startedAt = null;
+  S.finishedAt = null;
+  S.winnerId = null;
+  saveState();
+  broadcastState();
+  render();
+}
+
+function confirmBackToSetup() {
+  const hasThrows = S.teams.some(t => t.history.length > 0) || (S.setResults && S.setResults.length > 0);
+  if (!hasThrows) { backToSetup(); return; }
+  showConfirm('すでに得点が入力されています。\n開始前の設定画面に戻りますか？\n（チーム名と設定は保持されますが、得点はリセットされます）', backToSetup);
+}
+
 function resetGame() {
   S.phase = 'setup';
   S.teams = [];
@@ -635,7 +661,7 @@ function buildApp() {
     </div>
 
     ${_tab === 'game' ? buildGameTab() : ''}
-    ${_tab === 'stats' ? buildStatsTab() : ''}
+    ${_tab === 'stats' ? buildScoreboardTab() : ''}
     ${_tab === 'history' ? buildHistoryTab() : ''}
   `;
 }
@@ -662,6 +688,12 @@ function buildSetup() {
         <div class="team-color" style="background:${COLORS[i]};"></div>
         <input type="text" id="team-name-${i}" placeholder="${i === 0 ? 'もるまさ' : i === 1 ? '相手' : i === 2 ? '相手２' : '相手' + (i + 1)}" value="${escHtml(prevName)}" maxlength="20"/>
       </div>`;
+    if (i < tc - 1) {
+      teamInputs += `
+      <div style="display:flex;justify-content:center;margin:-2px 0 6px;">
+        <button class="btn btn-xs btn-gray" onclick="swapTeams(${i},${i + 1})">⇅ 入れ替え</button>
+      </div>`;
+    }
   }
 
   // レギュレーションモード別のN選択肢
@@ -865,6 +897,7 @@ function buildSetFinished() {
       </div>
       <div class="card-body" style="padding-top:0;">
         <button class="btn btn-primary btn-block" onclick="nextSet()">セット${nextSetNum}へ進む ▶</button>
+        <button class="btn btn-gray btn-block" onclick="confirmBackToSetup()" style="margin-top:8px;">⬅ 設定に戻る</button>
         <button class="btn btn-gray btn-block" onclick="confirmReset()" style="margin-top:8px;">試合リセット</button>
       </div>
     </div>
@@ -1012,6 +1045,7 @@ function buildPlaying() {
     </div>
 
     <div style="display:flex;gap:8px;margin-bottom:12px;">
+      <button class="btn btn-gray btn-sm" onclick="confirmBackToSetup()">⬅ 設定に戻る</button>
       <button class="btn btn-gray btn-sm" onclick="confirmReset()">🔄 試合リセット</button>
       <button class="btn btn-red btn-sm" onclick="confirmEndGame()">🏁 試合終了</button>
     </div>
@@ -1422,15 +1456,41 @@ function switchTab(tab) {
   render();
 }
 
-function updateTeamCount(val) {
-  S.settings.teamCount = parseInt(val);
-  // 既存の名前を保持
-  const names = [];
+// setup画面の入力値（チーム名・試合名・目標スコア・最大ミス数）をSへ保存する。
+// render()はinnerHTMLを全て書き換えるため、再描画前に必ずこれを呼ばないと入力中の値が消える。
+function captureSetupInputs() {
+  if (S.phase !== 'setup') return;
   for (let i = 0; i < S.settings.teamCount; i++) {
     const el = document.getElementById(`team-name-${i}`);
-    names.push(el ? el.value : (S.teams[i] ? S.teams[i].name : ''));
+    if (!el) continue;
+    if (S.teams[i]) S.teams[i].name = el.value;
+    else S.teams[i] = { id: i, name: el.value, score: 0, missStreak: 0, history: [], isEliminated: false };
   }
-  S.teams = names.map((n, i) => S.teams[i] ? { ...S.teams[i], name: n } : { id: i, name: n, score: 0, missStreak: 0, history: [], isEliminated: false });
+  const gname = document.getElementById('game-name');
+  if (gname) S.settings.gameName = gname.value;
+  const tsc = document.getElementById('target-score');
+  if (tsc) S.settings.targetScore = Math.max(10, parseInt(tsc.value) || 50);
+  const mm = document.getElementById('max-miss');
+  if (mm) S.settings.maxMiss = Math.max(1, parseInt(mm.value) || 3);
+  saveState();
+}
+
+function updateTeamCount(val) {
+  captureSetupInputs();
+  S.settings.teamCount = parseInt(val);
+  render();
+}
+
+// setup画面でチームiとjの名前を入れ替える。
+// 色と投擲順（先攻・後攻）はスロット側に固定なので、名前だけ交換すれば表示順の入れ替えになる。
+function swapTeams(i, j) {
+  captureSetupInputs();
+  if (!S.teams[i]) S.teams[i] = { id: i, name: '', score: 0, missStreak: 0, history: [], isEliminated: false };
+  if (!S.teams[j]) S.teams[j] = { id: j, name: '', score: 0, missStreak: 0, history: [], isEliminated: false };
+  const tmp = S.teams[i].name;
+  S.teams[i].name = S.teams[j].name;
+  S.teams[j].name = tmp;
+  saveState();
   render();
 }
 
@@ -1443,6 +1503,7 @@ function onStartGame() {
 }
 
 function switchRegMode(mode) {
+  captureSetupInputs();
   // モード切替時にデフォルトNを設定
   const defaults = { match: 3, first: 3, total: 3 };
   S.settings.regMode = mode;
@@ -1451,6 +1512,7 @@ function switchRegMode(mode) {
 }
 
 function setRegulation(mode, n) {
+  captureSetupInputs();
   S.settings.regMode = mode;
   S.settings.regN = n;
   render();
