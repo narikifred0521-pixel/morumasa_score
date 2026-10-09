@@ -254,6 +254,29 @@ body {
 .throw-chip.miss-chip { background: #FEE2E2; color: #DC2626; }
 .throw-chip.burst-chip { background: #FEF3C7; color: #B45309; }
 
+/* ─── ヘッダー内のミスの丸 ─── */
+.head-miss { display: flex; gap: 4px; flex-shrink: 0; }
+.head-miss .miss-dot { width: 10px; height: 10px; }
+.active-header .miss-dot { background: rgba(255,255,255,0.35); }
+.active-header .miss-dot.hit { background: #EF4444; box-shadow: 0 0 0 1.5px #fff; }
+.game-title-turn { font-size: 12px; font-weight: 800; color: #8A96A3; margin-left: auto; white-space: nowrap; }
+
+/* ─── カード内の得点履歴 ─── */
+.hist-row {
+  display: flex; align-items: center; justify-content: center;
+  gap: 4px; flex-wrap: nowrap; overflow: hidden;
+  margin: 2px 0 0; min-height: 22px;
+}
+.hist-chip {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 24px; padding: 2px 6px; border-radius: 6px;
+  font-size: 13px; font-weight: 800; color: #6B7684; background: #EEF1F5;
+}
+.hist-chip.miss { color: #DC2626; background: #FEE2E2; }
+.hist-chip.burst { color: #B45309; background: #FEF3C7; }
+.hist-chip.latest { color: #fff; transform: scale(1.12); }
+.hist-more { font-size: 11px; color: #A0AAB6; font-weight: 800; }
+
 /* ─── 待機中 ─── */
 .no-game {
   padding: 14px 18px; text-align: center;
@@ -296,8 +319,11 @@ function render(state) {
   const rn = state.regN || 3;
   const regLabel = rm === 'first' ? `${rn}セット先取` : rm === 'total' ? `${rn}セット合計` : `${rn}セット勝負`;
   // 大会名がなくてもレギュ名は常に表示
+  const playingTurn = state.phase === 'playing'
+    ? Math.floor((state.turnCount || 0) / Math.max(1, state.teams.filter(t=>!t.isEliminated).length)) + 1 : 0;
   const titleHtml = `<div class="game-title-bar">
     ${state.gameName ? `<span class="game-title-name">${esc(state.gameName)}</span>` : ''}
+    ${playingTurn ? `<span class="game-title-turn">ターン ${playingTurn}</span>` : ''}
     <span class="game-title-reg">${regLabel}</span>
   </div>`;
 
@@ -335,9 +361,7 @@ function render(state) {
 
   el.innerHTML = `
     ${titleHtml}
-    ${turnHtml}
     ${buildTeamsGrid(state)}
-    ${buildRecentThrows(state)}
   `;
 }
 
@@ -393,20 +417,39 @@ function buildTeamsGrid(state) {
             ${setWinBadge}
             ${totalBadge}
           </span>
-          ${badgeHtml}
+          ${t.isEliminated ? '' : `<span class="head-miss">${missDots}</span>`}
         </div>
         <div class="card-body">
           <div class="score" style="color:${scoreColor};">${scoreDisp}</div>
           <div class="progress-wrap">
             <div class="progress-fill" style="width:${pct}%;background:${color};"></div>
           </div>
-          <div class="miss-row">${missDots}</div>
-          <div class="throw-count">${t.throwCount || 0}投 / ${t.missCount || 0}ミス</div>
+          ${buildHistRow(state, i, color)}
         </div>
       </div>`;
   });
 
   return `<div class="teams-grid count-${count}">${cards.join('')}</div>`;
+}
+
+// チームカード内に、そのチームの得点を古い順に並べる（最新の1投だけチームカラーで塗る）
+function buildHistRow(state, teamIdx, color) {
+  const all = state.recentThrows || [];
+  const last = all[all.length - 1];
+  const mine = all.filter(h => h.teamIdx === teamIdx);
+  if (mine.length === 0) return '<div class="hist-row"></div>';
+  const MAX = 8;
+  const shown = mine.slice(-MAX);
+  const more = mine.length > MAX || (mine[0] && mine[0].turnNum > 1)
+    ? '<span class="hist-more">…</span>' : '';
+  const chips = shown.map(h => {
+    const isLatest = h === last;
+    const latestStyle = isLatest ? ` style="background:${color};"` : '';
+    if (h.points === 0) return `<span class="hist-chip miss${isLatest ? ' latest' : ''}"${isLatest ? ' style="background:#EF4444;"' : ''}>×</span>`;
+    if (h.burst) return `<span class="hist-chip burst${isLatest ? ' latest' : ''}"${latestStyle}>${h.points}→25</span>`;
+    return `<span class="hist-chip${isLatest ? ' latest' : ''}"${latestStyle}>${h.points}</span>`;
+  }).join('');
+  return `<div class="hist-row">${more}${chips}</div>`;
 }
 
 function buildRecentThrows(state) {
