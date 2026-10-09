@@ -332,14 +332,12 @@ function undoLastThrow() {
   let prevIdx = S.currentTeamIdx;
   let found = false;
 
-  // 直前の有効な投擲を持つチームを探す
-  for (let i = 0; i < S.teams.length; i++) {
-    prevIdx = (S.currentTeamIdx - 1 - i + S.teams.length * 10) % S.teams.length;
-    if (S.teams[prevIdx].history.length > 0) {
-      found = true;
-      break;
-    }
-  }
+  // 直前の投擲（時刻がいちばん新しいもの）を持つチームを探す
+  let latestTs = -Infinity;
+  S.teams.forEach((t, i) => {
+    const h = t.history[t.history.length - 1];
+    if (h && (h.timestamp || 0) >= latestTs) { latestTs = h.timestamp || 0; prevIdx = i; found = true; }
+  });
 
   if (!found) return;
 
@@ -481,6 +479,7 @@ function startGame() {
     try { localStorage.setItem('molkky_game_name', S.settings.gameName); } catch(e) {}
   }
 
+  delete S.resumePhase;
   S.teams = initTeams(names);
   S.currentTeamIdx = 0;
   S.turnCount = 0;
@@ -496,33 +495,51 @@ function startGame() {
   render();
 }
 
-// 試合開始後に、チーム名と設定を保持したまま開始前のsetup画面へ戻す。
-// チーム名を消すのは明示的な「試合リセット」(resetGame)のみ。
+// 試合中に設定画面へ移る（一時中断）。得点・投擲履歴はそのまま残す。
+// 設定画面で名前・投擲順・レギュレーションを直して resumeGame() で得点入力に戻れる。
 function backToSetup() {
-  S.teams = S.teams.map(t => ({
-    ...t, score: 0, missStreak: 0, history: [], isEliminated: false, setWins: 0, setTotalScore: 0,
-  }));
+  if (S.phase !== 'playing' && S.phase !== 'set_finished') return;
+  S.resumePhase = S.phase;
+  S.settings.teamCount = S.teams.length;
   S.phase = 'setup';
-  S.currentTeamIdx = 0;
-  S.turnCount = 0;
-  S.currentSet = 1;
-  S.setResults = [];
-  S.lastSetWinnerId = null;
-  S.startedAt = null;
-  S.finishedAt = null;
-  S.winnerId = null;
   saveState();
   broadcastState();
   render();
 }
 
-function confirmBackToSetup() {
-  const hasThrows = S.teams.some(t => t.history.length > 0) || (S.setResults && S.setResults.length > 0);
-  if (!hasThrows) { backToSetup(); return; }
-  showConfirm('すでに得点が入力されています。\n開始前の設定画面に戻りますか？\n（チーム名と設定は保持されますが、得点はリセットされます）', backToSetup);
+function confirmBackToSetup() { backToSetup(); }
+
+function hasAnyThrows() {
+  return S.teams.some(t => t.history && t.history.length > 0) || (S.setResults && S.setResults.length > 0);
+}
+
+// 投擲順を変えたあと、次に投げるチームを数え直す。
+// 生き残りのうち投擲数が最も少ないチーム（同数なら並びが先のチーム）が次。
+function recomputeTurn() {
+  let next = -1, minLen = Infinity;
+  S.teams.forEach((t, i) => {
+    if (t.isEliminated) return;
+    if (t.history.length < minLen) { minLen = t.history.length; next = i; }
+  });
+  if (next >= 0) S.currentTeamIdx = next;
+  S.turnCount = S.teams.reduce((n, t) => n + t.history.length, 0);
+}
+
+// 中断した試合に、設定画面の変更を反映して戻る
+function resumeGame() {
+  if (!S.resumePhase) return;
+  captureSetupInputs();
+  const phase = S.resumePhase;
+  if (phase === 'playing') recomputeTurn();
+  delete S.resumePhase;
+  S.phase = phase;
+  saveState();
+  broadcastState();
+  render();
 }
 
 function resetGame() {
+  delete S.resumePhase;
   S.phase = 'setup';
   S.teams = [];
   S.currentTeamIdx = 0;
@@ -599,7 +616,7 @@ function getPublicState() {
   const recentThrows = allThrows.slice(-20);
 
   return {
-    phase: S.phase,
+    phase: S.resumePhase || S.phase,
     gameName: S.settings.gameName,
     teams: S.teams.map(t => ({
       id: t.id,
@@ -680,12 +697,14 @@ function buildSetup() {
   const rm = S.settings.regMode || 'match';
   const rn = S.settings.regN || 3;
 
+  const paused = !!S.resumePhase;
   let teamInputs = '';
   for (let i = 0; i < tc; i++) {
     const prevName = (S.teams[i] && S.teams[i].name) || '';
+    const ci = paused && S.teams[i] && S.teams[i].colorIdx !== undefined ? S.teams[i].colorIdx : i;
     teamInputs += `
       <div class="team-row">
-        <div class="team-color" style="background:${COLORS[i]};"></div>
+        <div class="team-color" style="background:${COLORS[ci % COLORS.length]};"></div>
         <input type="text" id="team-name-${i}" placeholder="${i === 0 ? 'もるまさ' : i === 1 ? '相手' : i === 2 ? '相手２' : '相手' + (i + 1)}" value="${escHtml(prevName)}" maxlength="20"/>
       </div>`;
     if (i < tc - 1) {
@@ -715,7 +734,17 @@ function buildSetup() {
 
   const regLabel = rm==='match' ? `${rn}セット勝負` : rm==='first' ? `${rn}セット先取` : `${rn}セット合計`;
 
+  const pausedBanner = paused ? `
+    <div class="card" style="border:2px solid #FF5500;">
+      <div class="card-body">
+        <div style="font-weight:800;margin-bottom:4px;">⏸ 試合を中断中</div>
+        <div style="font-size:13px;color:#6b7280;margin-bottom:10px;">得点はそのまま残っています。名前・投擲順・レギュレーションを直したら、得点入力に戻ってください。配信のスコア表示は試合のまま出ています。</div>
+        <button class="btn btn-primary btn-block" onclick="resumeGame()">▶ 得点入力に戻る</button>
+      </div>
+    </div>` : '';
+
   return `
+    ${pausedBanner}
     <div class="card">
       <div class="card-header"><span class="card-title">⚙️ 試合設定</span></div>
       <div class="card-body">
@@ -725,12 +754,12 @@ function buildSetup() {
         </div>
         <div class="form-group">
           <label>チーム数</label>
-          <select id="team-count-select" onchange="updateTeamCount(this.value)">
+          <select id="team-count-select" onchange="updateTeamCount(this.value)" ${paused ? 'disabled' : ''}>
             ${[2,3,4,5,6].map(n=>`<option value="${n}" ${tc===n?'selected':''}>${n}チーム</option>`).join('')}
           </select>
         </div>
         <div class="form-group">
-          <label>チーム名</label>
+          <label>チーム名${paused ? ' <span style="font-weight:400;color:#6b7280;">（上から投げる順。入れ替えると得点もいっしょに移る）</span>' : ''}</label>
           ${teamInputs}
         </div>
 
@@ -761,7 +790,10 @@ function buildSetup() {
             <input type="number" id="max-miss" value="${S.settings.maxMiss}" min="1" max="5"/>
           </div>
         </div>
-        <button class="btn btn-primary btn-block" onclick="onStartGame()" style="margin-top:4px;">試合開始 🎯</button>
+        ${paused
+          ? `<button class="btn btn-primary btn-block" onclick="resumeGame()" style="margin-top:4px;">▶ 得点入力に戻る</button>
+             <button class="btn btn-gray btn-block" onclick="onStartGame()" style="margin-top:8px;">得点を消して最初からやり直す</button>`
+          : `<button class="btn btn-primary btn-block" onclick="onStartGame()" style="margin-top:4px;">試合開始 🎯</button>`}
       </div>
     </div>
     ${buildOverlayInfo()}
@@ -1485,6 +1517,16 @@ function updateTeamCount(val) {
 // 色と投擲順（先攻・後攻）はスロット側に固定なので、名前だけ交換すれば表示順の入れ替えになる。
 function swapTeams(i, j) {
   captureSetupInputs();
+  if (S.resumePhase && S.teams[i] && S.teams[j]) {
+    const tmpTeam = S.teams[i];
+    S.teams[i] = S.teams[j];
+    S.teams[j] = tmpTeam;
+    _orderDraft = null;
+    saveState();
+    broadcastState();
+    render();
+    return;
+  }
   if (!S.teams[i]) S.teams[i] = { id: i, name: '', score: 0, missStreak: 0, history: [], isEliminated: false };
   if (!S.teams[j]) S.teams[j] = { id: j, name: '', score: 0, missStreak: 0, history: [], isEliminated: false };
   const tmp = S.teams[i].name;
@@ -1495,6 +1537,14 @@ function swapTeams(i, j) {
 }
 
 function onStartGame() {
+  if (S.resumePhase && hasAnyThrows()) {
+    showConfirm('入力した得点をすべて消して、最初から試合を始めますか？', doStartGame);
+    return;
+  }
+  doStartGame();
+}
+
+function doStartGame() {
   const tc = document.getElementById('target-score');
   const mc = document.getElementById('max-miss');
   if (tc) S.settings.targetScore = Math.max(10, parseInt(tc.value) || 50);
