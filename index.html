@@ -216,6 +216,7 @@ let S = loadState() || {
     targetScore: 50,
     maxMiss: 3,
     gameName: '',
+    tournament: '',        // 大会名（予約枠から入る。オーバーレイのタイトルに出す）
     regMode: 'match',      // 'match'=Nセット勝負 | 'first'=Nセット先取 | 'total'=Nセット合計
     regN: 3,               // セット数
   },
@@ -452,6 +453,7 @@ function endGame(winnerId) {
   S.history.unshift({
     id: Date.now(),
     gameName: S.settings.gameName,
+    tournament: S.settings.tournament || '',
     teams: JSON.parse(JSON.stringify(S.teams)),
     winnerId,
     startedAt: S.startedAt,
@@ -474,6 +476,8 @@ function startGame() {
   }
   const gname = document.getElementById('game-name');
   S.settings.gameName = gname ? gname.value.trim() : '';
+  const gtour = document.getElementById('game-tournament');
+  if (gtour) S.settings.tournament = gtour.value.trim();
   // 大会名を別途保存（次回起動時に自動復元）
   if (S.settings.gameName) {
     try { localStorage.setItem('molkky_game_name', S.settings.gameName); } catch(e) {}
@@ -621,6 +625,7 @@ function getPublicState() {
   return {
     phase: S.resumePhase || S.phase,
     gameName: S.settings.gameName,
+    tournament: S.settings.tournament || '',
     teams: S.teams.map(t => ({
       id: t.id,
       name: t.name,
@@ -749,11 +754,16 @@ function buildSetup() {
 
   return `
     ${pausedBanner}
+    ${paused ? '' : buildSlotPicker()}
     <div class="card">
       <div class="card-header"><span class="card-title">⚙️ 試合設定</span></div>
       <div class="card-body">
         <div class="form-group">
-          <label>試合名（任意）</label>
+          <label>大会名（任意）</label>
+          <input type="text" id="game-tournament" placeholder="例：第4回モルック札幌大会" value="${escHtml(S.settings.tournament || '')}"/>
+        </div>
+        <div class="form-group">
+          <label>試合名・ラウンド（任意）</label>
           <input type="text" id="game-name" placeholder="例：予選Aブロック 第1試合" value="${escHtml(S.settings.gameName || (()=>{try{return localStorage.getItem('molkky_game_name')||'';}catch(e){return '';}})())}"/>
         </div>
         <div class="form-group">
@@ -1569,11 +1579,93 @@ function captureSetupInputs() {
   }
   const gname = document.getElementById('game-name');
   if (gname) S.settings.gameName = gname.value;
+  const gtour = document.getElementById('game-tournament');
+  if (gtour) S.settings.tournament = gtour.value;
   const tsc = document.getElementById('target-score');
   if (tsc) S.settings.targetScore = Math.max(10, parseInt(tsc.value) || 50);
   const mm = document.getElementById('max-miss');
   if (mm) S.settings.maxMiss = Math.max(1, parseInt(mm.value) || 3);
   saveState();
+}
+
+// ─── 予約枠（schedule.json） ───────────────────────────────────
+// 予約ツールの export_schedule.py が書き出す今後の配信枠。選ぶと大会名・ラウンド・条件・相手・自チーム名が入る。
+let _schedule = null;     // null=読み込み中 | [] | [{id,start,tournament,round,...}]
+let _scheduleError = '';
+
+function loadSchedule() {
+  fetch('schedule.json?t=' + Date.now(), { cache: 'no-store' })
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(data => { _schedule = (data && data.slots) || []; _scheduleError = ''; })
+    .catch(e => { _schedule = []; _scheduleError = '予約枠を読み込めませんでした'; })
+    .then(() => {
+      if (S.phase !== 'setup' || _tab !== 'game') return;
+      captureSetupInputs();
+      render();
+    });
+}
+
+function slotDateLabel(start) {
+  const d = new Date(start.replace(' ', 'T') + ':00+09:00');
+  const wd = '日月火水木金土'[d.getDay()];
+  return `${d.getMonth() + 1}/${d.getDate()}(${wd})`;
+}
+
+function buildSlotPicker() {
+  if (_schedule === null) return '';
+  const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })();
+  const slots = _schedule.filter(s => s.start.slice(0, 10) >= today);
+  if (slots.length === 0 && !_scheduleError) return '';
+  const groups = [];
+  slots.forEach(s => {
+    const key = s.start.slice(0, 10) + '|' + s.tournament;
+    let g = groups.find(x => x.key === key);
+    if (!g) { g = { key, label: `${slotDateLabel(s.start)} ${s.tournament}`, items: [] }; groups.push(g); }
+    g.items.push(s);
+  });
+  const opts = groups.map(g => `<optgroup label="${escHtml(g.label)}">${g.items.map(s =>
+    `<option value="${escHtml(s.id)}" ${S.settings.slotId === s.id ? 'selected' : ''}>${escHtml(s.round)}${s.condition ? '（' + escHtml(s.condition) + '）' : ''}　vs ${escHtml(s.opponent || '未定')}</option>`
+  ).join('')}</optgroup>`).join('');
+  const cur = slots.find(s => s.id === S.settings.slotId);
+  const curIdx = cur ? slots.indexOf(cur) : -1;
+  const next = curIdx >= 0 ? slots[curIdx + 1] : null;
+  const note = cur && cur.ownMembers
+    ? `<div style="font-size:12px;color:#6b7280;margin-top:6px;">${escHtml(cur.ownTeam)}：${escHtml(cur.ownMembers)}</div>` : '';
+  return `
+    <div class="card">
+      <div class="card-header"><span class="card-title">📅 予約枠から選ぶ</span></div>
+      <div class="card-body">
+        ${_scheduleError ? `<div style="font-size:12px;color:#EF4444;">${_scheduleError}</div>` : `
+        <div style="display:flex;gap:8px;align-items:center;">
+          <select id="slot-select" onchange="applySlot(this.value)" style="flex:1;min-width:0;">
+            <option value="">― 予約枠を選ぶ（${slots.length}枠）―</option>
+            ${opts}
+          </select>
+          ${next ? `<button class="btn btn-xs btn-gray" style="white-space:nowrap;" onclick="applySlot('${escHtml(next.id)}')">次の枠 ▶</button>` : ''}
+        </div>
+        ${note}
+        <div style="font-size:12px;color:#6b7280;margin-top:6px;">選ぶと下の設定に入ります。相手が未定なら空のまま始めればOK（配信では「相手」と出ます）。</div>`}
+      </div>
+    </div>`;
+}
+
+function applySlot(id) {
+  captureSetupInputs();
+  const s = (_schedule || []).find(x => x.id === id);
+  S.settings.slotId = s ? s.id : '';
+  if (!s) { render(); return; }
+  S.settings.tournament = s.tournament || '';
+  S.settings.gameName = s.round || '';
+  if (s.regMode && s.regN) { S.settings.regMode = s.regMode; S.settings.regN = s.regN; }
+  if (S.settings.teamCount < 2) S.settings.teamCount = 2;
+  const setName = (i, name) => {
+    if (S.teams[i]) S.teams[i].name = name;
+    else S.teams[i] = { id: i, name, score: 0, missStreak: 0, history: [], isEliminated: false };
+  };
+  setName(0, s.ownTeam || '');
+  setName(1, s.opponent || '');
+  saveState();
+  render();
 }
 
 function updateTeamCount(val) {
@@ -1715,6 +1807,7 @@ function escHtml(str) {
 // 初期化
 // ═══════════════════════════════════════════════════════════════
 render();
+loadSchedule();
 </script>
 </body>
 </html>
