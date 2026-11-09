@@ -280,9 +280,10 @@ body {
 
 /* ─── カード内の得点履歴 ─── */
 .hist-row {
-  display: flex; align-items: center; justify-content: center;
+  /* 右寄せ：はみ出したら古い方（左）から切れる。最新の1投は必ず見える */
+  display: flex; align-items: center; justify-content: flex-end;
   gap: 4px; flex-wrap: nowrap; overflow: hidden;
-  margin: 2px 0 0; min-height: 22px;
+  margin: 2px 0 0; min-height: 24px; padding: 0 4px;
 }
 .hist-chip {
   display: inline-flex; align-items: center; justify-content: center;
@@ -291,7 +292,7 @@ body {
 }
 .hist-chip.miss { color: #DC2626; background: #FEE2E2; }
 .hist-chip.burst { color: #B45309; background: #FEF3C7; }
-.hist-chip.latest { color: #fff; transform: scale(1.12); }
+.hist-chip.latest { color: #fff; transform: scale(1.12); transform-origin: right center; }
 .hist-more { font-size: 11px; color: #A0AAB6; font-weight: 800; }
 
 /* ─── 待機中 ─── */
@@ -458,7 +459,8 @@ function buildHistRow(state, teamIdx, color) {
   const last = all[all.length - 1];
   const mine = all.filter(h => h.teamIdx === teamIdx);
   if (mine.length === 0) return '<div class="hist-row"></div>';
-  const MAX = 8;
+  // カードの幅に収まる数だけ出す（2チームは6投、5〜6チームは4投）
+  const MAX = (state.teams || []).length >= 5 ? 4 : 6;
   const shown = mine.slice(-MAX);
   const more = mine.length > MAX || (mine[0] && mine[0].turnNum > 1)
     ? '<span class="hist-more">…</span>' : '';
